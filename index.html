@@ -103,7 +103,7 @@ var onSubmitForm = function() {
 const ID_PEDALBOX2 = 0x501
 
 var socket = io.connect('http://192.168.42.1:4200');
-socket.on('testevent', function (data, time) {
+socket.on('candata', function (data, time) {
    console.log(data);
    console.log(time);
    throttle1 = parseInt(data.substring(4,8), 16);
