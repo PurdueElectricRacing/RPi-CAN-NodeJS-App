@@ -34,7 +34,7 @@ http://www.hacksparrow.com/tcp-socket-programming-in-node-js.html.) */
 var express = require('express');
 var app = express();
 var server = require('http').createServer(app)
-var io = require('socket.io')(server);
+var io = require('socket.io').listen(server);
 var fs = require('fs');
 
 
@@ -46,18 +46,20 @@ var timeInit = getTime();     //gets the time that the server was started
 
 var getDynamicDate = function(){    //gets the dynamic starting date
   var d = new Date();
-  var date = (d.getMonth().toString())        //the actual date
-  + "-"
-  + (d.getDate() + 1).toString()
-  + "-"
-  + (d.getFullYear().toString())
-  + "-";
+  var date = (
+  (d.getFullYear().toString())
+  + "_"
+  + (d.getMonth()+1).toString())        //the actual date
+  + "_"
+  + (d.getDate()).toString()
+  + "_";
 
   var startTime = (d.getHours()).toString()    //the time
-  + ":"
+  + "_"
   + d.getMinutes().toString()
-  + ":"
+  + "_"
   + d.getSeconds().toString();
+  console.log(date+startTime);
 
   return date + startTime;
 };
@@ -174,8 +176,9 @@ log = getDynamicDate();       //date and time together
 
 var start = Date.now();
 
-var logPath = "/home/pi/Public/logger/" + log + ".txt";     //path to the new log file
+var logPath = "/home/pi/Public/logger/logs/" + log + ".txt";     //path to the new log file
 try{
+  console.log("logging to " + logPath);
   fs.appendFileSync("/home/pi/Public/logger/runs.txt", log + "\n");     //adds the date to a file containing dates of all the runs
   fs.appendFileSync(logPath, log);        //creates and adds the current date and time to a new run log file
 }catch (err){
@@ -200,30 +203,40 @@ var CanParseStateType = {
 var canParseState = CanParseStateType.BEFORE_FRAME;
 
 
-candapterComPort.on('data', function(candapterData) {
+//candapterComPort.on('data', function(candapterData) {
+fs.readFile('fakeCANdapter.fake','utf8', function(err, candapterData) {
 	i = 0
+	console.log(candapterData);
+	console.log(candapterData.charCodeAt(0));
 	//116 = 't' in ascii
-	while (i < candapterData.length && candapterData[i] != 116 && canParseState == CanParseStateType.BEFORE_FRAME)
+	while (i < candapterData.length)
 	{
-		i++;
-	}
-	while (i < candapterData.length && candapterData[i] != 13 && receivingCanFrameIndex <= 21)
-	{
-		i++
-		canParseState = CanParseStateType.RECEIVING_FRAME;
-		receivingCanFrame[receivingCanFrameIndex] = candapterData[i]
-		receivingCanFrameIndex ++;
-	}
-	if (candapterData[i] == 13)  //carriage return /r
-	{
+		while (i < candapterData.length && candapterData.charCodeAt(i) != 116 && canParseState == CanParseStateType.BEFORE_FRAME)
+		{
+			i++;
+		}
+		while (i < candapterData.length && candapterData.charCodeAt(i) != 13 && receivingCanFrameIndex <= 21)
+		{
+			i++
+			console.log(candapterData[i]);
+			canParseState = CanParseStateType.RECEIVING_FRAME;
+			receivingCanFrame[receivingCanFrameIndex] = candapterData[i]
+			receivingCanFrameIndex ++;
+		}
+		if (candapterData.charCodeAt(i) == 13)  //carriage return /r
+		{
+			//console.log('Parsed: ' + receivingCanFrame.toString('ascii', 0, receivingCanFrameIndex) + '\n\r');
+			singleFrame = candapterData.toString('ascii').substring(0,receivingCanFrameIndex),
+			console.log(singleFrame);
+			io.emit("candata",
+				singleFrame,
+				getTime() - timeInit
+				);
+			fs.appendFileSync(logPath,
+				Msg2Csv(candapterData.toString('ascii').substring(0,receivingCanFrameIndex)) + '\n');
+			receivingCanFrameIndex = 0;
+		}
 		canParseState = CanParseStateType.BEFORE_FRAME
-		//console.log('Parsed: ' + receivingCanFrame.toString('ascii', 0, receivingCanFrameIndex) + '\n\r');
-		io.emit("candata",
-			candapterData.toString('ascii').substring(0,receivingCanFrameIndex),
-      			getTime() - timeInit);
-		fs.appendFileSync(logPath, 
-			Msg2Csv(candapterData.toString('ascii').substring(0,receivingCanFrameIndex)) + '\n');
-		receivingCanFrameIndex = 0;
 	}
   //writes CAN messages to log files
 //  fs.appendFileSync(logPath, candapterData + '\n');
