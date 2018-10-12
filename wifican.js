@@ -34,7 +34,7 @@ http://www.hacksparrow.com/tcp-socket-programming-in-node-js.html.) */
 var express = require('express');
 var app = express();
 var server = require('http').createServer(app)
-var io = require('socket.io')(server);
+var io = require('socket.io').listen(server);
 var fs = require('fs');
 
 
@@ -46,18 +46,20 @@ var timeInit = getTime();     //gets the time that the server was started
 
 var getDynamicDate = function(){    //gets the dynamic starting date
   var d = new Date();
-  var date = (d.getMonth().toString())        //the actual date
-  + "-"
-  + (d.getDate() + 1).toString()
-  + "-"
-  + (d.getFullYear().toString())
-  + "-";
+  var date = (
+  (d.getFullYear().toString())
+  + "_"
+  + (d.getMonth()+1).toString())        //the actual date
+  + "_"
+  + (d.getDate()).toString()
+  + "_";
 
   var startTime = (d.getHours()).toString()    //the time
-  + ":"
+  + "_"
   + d.getMinutes().toString()
-  + ":"
+  + "_"
   + d.getSeconds().toString();
+  console.log(date+startTime);
 
   return date + startTime;
 };
@@ -122,7 +124,8 @@ var sendCANFrame = function (id, dlc, data) {
 var openCandapter = function () {
   console.log('starting candapter');
   console.log(dict);
-   candapterComPort.write('O\r')
+  candapterComPort.write('A1\r');
+  candapterComPort.write('O\r');
 }
 
 var closeCandapter = function () {
@@ -174,22 +177,16 @@ log = getDynamicDate();       //date and time together
 
 var start = Date.now();
 
-var logPath = "/home/pi/Public/logger/" + log + ".txt";     //path to the new log file
+var logPath = "/home/pi/Public/logger/logs/" + log + ".txt";     //path to the new log file
 try{
+  console.log("logging to " + logPath);
   fs.appendFileSync("/home/pi/Public/logger/runs.txt", log + "\n");     //adds the date to a file containing dates of all the runs
-  fs.appendFileSync(logPath, log);        //creates and adds the current date and time to a new run log file
+  fs.appendFileSync(logPath, log + "\n");        //creates and adds the current date and time to a new run log file
 }catch (err){
   console.log("\nError: unable to locate file or directory.\n", err.stack);
 }
 
-
-var millis = 0;
-var getMillis = function(){       //gets the elapsed time in milliseconds since startup
-    return (Date.now() - start).toString();
-}
-
 ////parse can frame stuff
-receivingCanFrame = Buffer.alloc(21);
 receivingCanFrameIndex = 0;
 
 var CanParseStateType = {
@@ -201,44 +198,61 @@ var canParseState = CanParseStateType.BEFORE_FRAME;
 
 
 candapterComPort.on('data', function(candapterData) {
+	var multiFrame = '';
+	var receiveCanFrame = '';
 	i = 0
+	candapterData = candapterData.toString('utf8');
 	//116 = 't' in ascii
-	while (i < candapterData.length && candapterData[i] != 116 && canParseState == CanParseStateType.BEFORE_FRAME)
+	while (i < candapterData.length)
 	{
-		i++;
-	}
-	while (i < candapterData.length && candapterData[i] != 13 && receivingCanFrameIndex <= 21)
-	{
-		i++
-		canParseState = CanParseStateType.RECEIVING_FRAME;
-		receivingCanFrame[receivingCanFrameIndex] = candapterData[i]
-		receivingCanFrameIndex ++;
-	}
-	if (candapterData[i] == 13)  //carriage return /r
-	{
-		canParseState = CanParseStateType.BEFORE_FRAME
-		//console.log('Parsed: ' + receivingCanFrame.toString('ascii', 0, receivingCanFrameIndex) + '\n\r');
-		io.emit("candata",
-			candapterData.toString('ascii').substring(0,receivingCanFrameIndex),
-      			getTime() - timeInit);
-		fs.appendFileSync(logPath, 
-			Msg2Csv(candapterData.toString('ascii').substring(0,receivingCanFrameIndex)) + '\n');
 		receivingCanFrameIndex = 0;
+		receiveCanFrame = '';
+		//console.log('start of frame');
+		while (i < candapterData.length && candapterData.charCodeAt(i) != 116 && canParseState == CanParseStateType.BEFORE_FRAME)
+		{
+			i++;
+		}
+		while (i < candapterData.length && candapterData.charCodeAt(i) != 13 && receivingCanFrameIndex <= 21)
+		{
+			i++;
+			canParseState = CanParseStateType.RECEIVING_FRAME;
+			receiveCanFrame += candapterData[i];
+			receivingCanFrameIndex ++;
+		}
+		if (candapterData.charCodeAt(i) == 13)  //carriage return /r
+		{
+			singleFrame = receiveCanFrame.substring(0,receivingCanFrameIndex);
+			io.emit("candata", singleFrame, getTime() - timeInit);
+			//concatenate all frames sent into one
+			singleFrame = Msg2Csv(singleFrame) + '\n';
+			//console.log(singleFrame);
+			multiFrame += singleFrame; 
+		}
+		canParseState = CanParseStateType.BEFORE_FRAME
 	}
-  //writes CAN messages to log files
-//  fs.appendFileSync(logPath, candapterData + '\n');
-//  millis = getMillis();
-//  fs.appendFileSync(logPath, millis);
-	//console.log('Received: ' + candapterData + '\n\r');
-
+	fs.appendFileSync(logPath, multiFrame);
 });
 
+//time stamp
+var time_stamp_old = 0;
+var minute_count = 0;
+
 var Msg2Csv = function(msg) {
-	datalength = 	msg.substring(4,5);
-	csvline = 	getMillis() + ',' +
-			msg.substring(1,4) + ',' +
-			msg.substring(4,5) + ',' +
-			msg.substring(5, 7 + (datalength*2));
+	datalength = 	msg.substring(3,4);
+	time_stamp = parseInt(msg.substring(4 + (datalength*2)), 16) + minute_count * 60000;
+	diff_time = time_stamp - time_stamp_old;
+
+	if (diff_time < 0) {
+		//means that the new time_stamp has rolled over
+		minute_count += 1;
+		time_stamp += 60000;
+	}
+	csvline = 	time_stamp + ',' +
+			msg.substring(0,3) + ',' +
+			msg.substring(3,4) + ',' +
+			msg.substring(4, 4 + (datalength*2));
+
+	time_stamp_old = time_stamp; //replace old time_stamp
 	return csvline;
 };
 
@@ -288,5 +302,7 @@ var dict = {
     '0x210': 'Pedal_Box-Torque',
     '0x503': 'Calibrate',
     '0x350': 'Dashboard',
-    '0x420': 'Accelerometer'
-  };
+    '0x420': 'Accelerometer',
+    '0x421': 'Accel, Gyro',
+    '0x422': 'Steering Angle'
+};
